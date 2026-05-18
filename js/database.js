@@ -33,6 +33,15 @@ window.SAOD_LOCAL_DATABASE = {
       "role": "rider",
       "joined": "",
       "company": "Hatid Express"
+    },
+    {
+      "id": "USR-004",
+      "name": "Patrick Pagdanganan",
+      "email": "patrick@saod.com",
+      "password": "patrick123",
+      "role": "rider",
+      "joined": "",
+      "company": "Sorsogon Delivery Hub"
     }
   ],
   "products": [
