@@ -16,6 +16,23 @@ window.SAOD_LOCAL_DATABASE = {
       "role": "vendor",
       "joined": "",
       "company": "SAOD Market"
+    },
+    {
+      "id": "USR-002",
+      "name": "Derek Jaramiel",
+      "email": "derek@saod.com",
+      "password": "derek123",
+      "role": "customer",
+      "joined": "",
+    },
+    {
+      "id": "USR-003",
+      "name": "Chislon Olaybar",
+      "email": "chislon@saod.com",
+      "password": "chislon123",
+      "role": "rider",
+      "joined": "",
+      "company": "Hatid Express"
     }
   ],
   "products": [
@@ -382,4 +399,3 @@ window.SAOD_LOCAL_DATABASE = {
     "deliveries": 0
   }
 };
-
