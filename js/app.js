@@ -39,6 +39,47 @@ function now() {
 
 let currentUser = null;
 let selectedCategory = null;
+const HANDLING_FEE = 30;
+
+function orderHasVendor(order, vendorId) {
+  return order.vendorId === vendorId ||
+    (order.vendorIds || []).includes(vendorId) ||
+    (order.items || []).some(item => item.vendorId === vendorId);
+}
+
+function deliveryHasVendor(delivery, vendorId) {
+  return delivery.vendorId === vendorId ||
+    (delivery.vendorIds || []).includes(vendorId) ||
+    (delivery.items || []).some(item => item.vendorId === vendorId);
+}
+
+function deliveryOptionsHtml(companies) {
+  return `<option value="">Choose Delivery Option</option><option value="PICKUP">Pick up</option>${companies.map(c => `<option value="${c}">${c}</option>`).join('')}`;
+}
+
+function isPickupOption(option) {
+  return option === 'PICKUP';
+}
+
+function setPickupFormState(addressId, riderId, option) {
+  const isPickup = isPickupOption(option);
+  const addressEl = document.getElementById(addressId);
+  const riderEl = document.getElementById(riderId);
+
+  if (addressEl) {
+    addressEl.disabled = isPickup;
+    addressEl.placeholder = isPickup ? 'No delivery address needed for pickup' : 'Enter delivery address';
+    if (isPickup) addressEl.value = '';
+  }
+
+  if (riderEl && isPickup) {
+    riderEl.innerHTML = `<option value="">No rider needed for pickup</option>`;
+    riderEl.value = '';
+    riderEl.disabled = true;
+  } else if (riderEl) {
+    riderEl.disabled = false;
+  }
+}
 
 // ═══════════════════════════════════════════
 //  AUTH
@@ -68,6 +109,7 @@ function clearRegisterForm() {
   document.getElementById('reg-name').value = '';
   document.getElementById('reg-email').value = '';
   document.getElementById('reg-pass').value = '';
+  document.getElementById('reg-company').value = '';
   document.getElementById('reg-msg').textContent = '';
   document.querySelectorAll('.role-card').forEach((c, i) => {
     c.classList.toggle('selected', i === 0);
@@ -76,6 +118,7 @@ function clearRegisterForm() {
   if (label) {
     label.textContent = 'Full Name';
   }
+  document.getElementById('reg-company-group').style.display = 'none';
 }
 
 function selectRole(el) {
@@ -84,8 +127,9 @@ function selectRole(el) {
   const role = el.dataset.role;
   const label = document.getElementById('reg-name-label');
   if (label) {
-    label.textContent = role === 'rider' ? 'Full Name / Company Name' : 'Full Name';
+    label.textContent = role === 'rider' ? 'Full Name' : 'Full Name';
   }
+  document.getElementById('reg-company-group').style.display = role === 'rider' ? 'block' : 'none';
 }
 
 function showMsg(id, text, type = 'error') {
@@ -99,14 +143,18 @@ function register() {
   const email = document.getElementById('reg-email').value.trim();
   const pass  = document.getElementById('reg-pass').value;
   const role  = document.querySelector('.role-card.selected')?.dataset.role || 'customer';
+  const company = role === 'rider' ? document.getElementById('reg-company').value.trim() : null;
 
   if (!name || !email || !pass) return showMsg('reg-msg', 'Please fill in all fields.');
   if (pass.length < 6)         return showMsg('reg-msg', 'Password must be at least 6 characters.');
+  if (role === 'rider' && !company) return showMsg('reg-msg', 'Please enter your company/employer name.');
 
   const users = DB.get('users');
   if (users.find(u => u.email === email)) return showMsg('reg-msg', 'Email already registered.');
 
   const user = { id: DB.nextId('users'), name, email, password: pass, role, joined: now() };
+  if (role === 'rider') user.company = company;
+
   users.push(user);
   DB.set('users', users);
   showMsg('reg-msg', 'Account created! You can now sign in.', 'success');
@@ -190,7 +238,7 @@ const renders = {
 
     const myOrders =
       u.role === 'customer' ? orders.filter(o => o.customerId === u.id) :
-      u.role === 'vendor'   ? orders.filter(o => o.vendorId   === u.id) :
+      u.role === 'vendor'   ? orders.filter(o => orderHasVendor(o, u.id)) :
       u.role === 'rider'    ? orders.filter(o => deliveries.some(d => d.orderId === o.id && d.riderId === u.id)) :
       orders;
 
@@ -347,7 +395,7 @@ const renders = {
                       ? `<button class="btn btn-primary btn-sm" onclick="openDirectOrder('${p.id}')">Order</button>
                          <button class="btn btn-outline btn-sm" onclick="openAddToCart('${p.id}')">Add Cart</button>`
                       : ''}
-                    ${(currentUser.role === 'admin' || currentUser.id === p.vendorId)
+                    ${(currentUser.role === 'admin' || (currentUser.role === 'vendor' && currentUser.id === p.vendorId))
                       ? `<button class="btn btn-outline btn-sm" onclick="editProduct('${p.id}')">Edit</button>
                          <button class="btn btn-danger btn-sm" onclick="deleteProduct('${p.id}')">Delete</button>`
                       : ''}
@@ -364,23 +412,63 @@ const renders = {
     const deliveries = DB.get('deliveries');
     const myOrders =
       currentUser.role === 'customer' ? orders.filter(o => o.customerId === currentUser.id) :
-      currentUser.role === 'vendor'   ? orders.filter(o => o.vendorId   === currentUser.id) :
-      currentUser.role === 'rider'    ? orders.filter(o => deliveries.some(d => d.orderId === o.id && d.riderId === currentUser.id)) :
+      currentUser.role === 'vendor'   ? orders.filter(o => orderHasVendor(o, currentUser.id)) :
+      currentUser.role === 'rider'    ? orders.filter(o => {
+        const delivery = deliveries.find(d => d.orderId === o.id);
+        const isActive = o.status !== 'Delivered' && o.status !== 'Cancelled';
+        return delivery && isActive && (!delivery.riderId || delivery.riderId === currentUser.id);
+      }) :
       orders;
 
     // Adjust the orders table header depending on the current user's role
     const headerRow = document.querySelector('#page-orders table thead tr');
     if (headerRow) {
-      if (currentUser.role === 'rider') {
-        headerRow.innerHTML = '<th>Order ID</th><th>Product</th><th>Qty</th><th>Total</th><th>Customer</th><th>Payment</th><th>Status</th><th>Actions</th>';
-      } else {
-        headerRow.innerHTML = '<th>Order ID</th><th>Product</th><th>Qty</th><th>Total</th><th>Customer</th><th>Vendor</th><th>Payment</th><th>Status</th><th>Actions</th>';
-      }
+      headerRow.innerHTML = '<th>Order ID</th><th>Date</th><th>Status</th><th>Actions</th>';
     }
+
+    document.getElementById('orders-table').innerHTML = myOrders.length
+      ? myOrders.map(o => {
+          const delivery = deliveries.find(d => d.orderId === o.id);
+          const isOpenDelivery = currentUser.role === 'rider' && delivery && !delivery.riderId;
+          const isClaimedByRider = currentUser.role === 'rider' && delivery && delivery.riderId === currentUser.id;
+          const isPickup = (o.fulfillmentOption || '').toLowerCase() === 'pickup' || o.deliveryOption === 'Pickup';
+          return `
+          <tr>
+            <td><b>${o.id}</b></td>
+            <td>${o.date}</td>
+            <td>
+              <span class="badge ${statusBadge(o.status)}">${o.status}</span>
+              ${isOpenDelivery ? '<span class="badge badge-gray" style="margin-left:4px">Open</span>' : ''}
+              ${isClaimedByRider ? '<span class="badge badge-orange" style="margin-left:4px">Claimed</span>' : ''}
+            </td>
+            <td>
+              <div class="actions-row" style="display:flex;flex-wrap:wrap;gap:6px;">
+                <button class="btn btn-outline btn-sm" onclick="viewOrderDetail('${o.id}')">View</button>
+                ${isOpenDelivery ? `<button class="btn btn-primary btn-sm" onclick="claimDelivery('${delivery.id}')">Choose Delivery</button>` : ''}
+                ${(currentUser.role === 'admin' || currentUser.role === 'vendor') && o.status === 'Pending' && isPickup
+                  ? `<button class="btn btn-primary btn-sm" onclick="updateOrderStatus('${o.id}','Ready for pickup')">Ready for pickup</button>` : ''}
+                ${(currentUser.role === 'admin' || currentUser.role === 'vendor') && o.status === 'Pending' && !isPickup
+                  ? `<button class="btn btn-primary btn-sm" onclick="updateOrderStatus('${o.id}','Processing')">Process</button>` : ''}
+                ${(currentUser.role === 'admin' || currentUser.role === 'vendor') && o.status === 'Processing'
+                  ? `<button class="btn btn-primary btn-sm" onclick="updateOrderStatus('${o.id}','Shipped')">Confirm Order</button>` : ''}
+                ${o.status === 'Pending' && currentUser.id === o.customerId
+                  ? `<button class="btn btn-danger btn-sm" onclick="cancelOrder('${o.id}')">Cancel</button>` : ''}
+                ${o.status === 'Cancelled' && (currentUser.role === 'vendor' || currentUser.role === 'admin') && currentUser.id === o.vendorId
+                  ? `<button class="btn btn-danger btn-sm" onclick="removeOrder('${o.id}')">Remove</button>` : ''}
+              </div>
+            </td>
+          </tr>`;
+        }).join('')
+      : `<tr><td colspan="4"><div class="empty-state"><div class="empty-icon">📭</div>No orders yet.</div></td></tr>`;
+    return;
 
     if (currentUser.role === 'rider') {
       document.getElementById('orders-table').innerHTML = myOrders.length
-        ? myOrders.map(o => `
+        ? myOrders.map(o => {
+            const delivery = deliveries.find(d => d.orderId === o.id);
+            const isMine = delivery && delivery.riderId === currentUser.id;
+            const isOpen = delivery && !delivery.riderId;
+            return `
             <tr>
               <td><b>${o.id}</b></td>
               <td>${o.productName}</td>
@@ -388,13 +476,19 @@ const renders = {
               <td>₱${o.total.toFixed(2)}</td>
               <td>${o.customerName}</td>
               <td><span class="badge badge-blue">${o.payMethod}</span></td>
-              <td><span class="badge ${statusBadge(o.status)}">${o.status}</span></td>
+              <td>
+                <span class="badge ${statusBadge(o.status)}">${o.status}</span>
+                ${isOpen ? '<span class="badge badge-gray" style="margin-left:4px">Open</span>' : ''}
+                ${isMine ? '<span class="badge badge-orange" style="margin-left:4px">Claimed</span>' : ''}
+              </td>
               <td>
                 <div class="actions-row" style="display:flex;flex-wrap:wrap;gap:6px;">
-                  <button class="btn btn-outline btn-sm" onclick="viewOrderDetail('${o.id}')">👁 View</button>
+                  ${isOpen ? `<button class="btn btn-primary btn-sm" onclick="claimDelivery('${delivery.id}')">Choose Delivery</button>` : ''}
+                  ${!isOpen ? '—' : ''}
                 </div>
               </td>
-            </tr>`).join('')
+            </tr>`;
+          }).join('')
         : `<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">📭</div>No orders yet.</div></td></tr>`;
     } else {
       document.getElementById('orders-table').innerHTML = myOrders.length
@@ -468,7 +562,7 @@ const renders = {
     const pays = DB.get('payments');
     const myPays =
       currentUser.role === 'customer' ? pays.filter(p => p.customerId === currentUser.id) :
-      currentUser.role === 'vendor'   ? pays.filter(p => p.vendorId   === currentUser.id) :
+      currentUser.role === 'vendor'   ? pays.filter(p => p.vendorId === currentUser.id || (p.vendorIds || []).includes(currentUser.id)) :
       pays;
 
     document.getElementById('payments-table').innerHTML = myPays.length
@@ -491,7 +585,7 @@ const renders = {
     const myDel =
       currentUser.role === 'customer' ? deliveries.filter(d => d.customerId === currentUser.id) :
       currentUser.role === 'rider'    ? deliveries.filter(d => d.riderId === currentUser.id) :
-      currentUser.role === 'vendor'   ? deliveries.filter(d => d.vendorId === currentUser.id) :
+      currentUser.role === 'vendor'   ? deliveries.filter(d => deliveryHasVendor(d, currentUser.id)) :
       deliveries;
 
     document.getElementById('delivery-table').innerHTML = myDel.length
@@ -503,7 +597,8 @@ const renders = {
                 <td>${d.orderId}</td>
                 <td>${d.customerName}</td>
                 <td>${d.address}</td>
-                <td>${d.riderName}</td>
+                <td>${d.company || '—'}</td>
+                <td>${d.riderName || currentUser.name}</td>
                 <td><span class="badge ${delivBadge(d.status)}">${d.status}</span></td>
                 <td>
                   <div class="actions-row" style="display:flex;flex-wrap:wrap;gap:6px;">
@@ -520,10 +615,11 @@ const renders = {
               <td>${d.orderId}</td>
               <td>${d.customerName}</td>
               <td>${d.address}</td>
+              <td>${d.company || '—'}</td>
               <td>${d.riderName ||
                 `<select onchange="assignRider('${d.id}',this.value)" style="font-size:12px;padding:4px 8px">
                   <option value="">Choose Rider</option>
-                  ${riders.map(r => `<option value="${r.id}">${r.name}</option>`).join('')}
+                  ${riders.filter(r => r.company === d.company).map(r => `<option value="${r.id}">${r.name}</option>`).join('')}
                 </select>`}
               </td>
               <td><span class="badge ${delivBadge(d.status)}">${d.status}</span></td>
@@ -540,7 +636,7 @@ const renders = {
               </td>
             </tr>`;
         }).join('')
-      : `<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">🚚</div>No deliveries found.</div></td></tr>`;
+      : `<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">🚚</div>No deliveries found.</div></td></tr>`;
   },
 
   users() {
@@ -616,6 +712,11 @@ function editProduct(id) {
 }
 
 function deleteProduct(id) {
+  const prod = DB.get('products').find(p => p.id === id);
+  if (!prod) return alert('Product not found.');
+  if (!currentUser || (currentUser.role !== 'admin' && !(currentUser.role === 'vendor' && currentUser.id === prod.vendorId))) {
+    return alert('Only the product vendor or admin can delete this product.');
+  }
   if (!confirm('Delete this product?')) return;
   DB.set('products', DB.get('products').filter(p => p.id !== id));
   renders.products();
@@ -685,17 +786,55 @@ function openDirectOrder(productId) {
 
   const stockUnit = prod.stockUnit || 'unit';
   const riders = DB.get('users').filter(u => u.role === 'rider');
-  const riderSelect = document.getElementById('direct-order-rider');
-  riderSelect.innerHTML = `<option value="">Company Delivery</option>${riders.map(r => `<option value="${r.id}">${r.name}</option>`).join('')}`;
+  const companies = [...new Set(riders.map(r => r.company).filter(Boolean))];
+
+  const companySelect = document.getElementById('direct-order-company');
+  companySelect.innerHTML = deliveryOptionsHtml(companies);
 
   document.getElementById('direct-order-prod-id').value = prod.id;
   document.getElementById('direct-order-prod-name').value = prod.name;
   document.getElementById('direct-order-qty').value = 1;
   document.getElementById('direct-order-unit-label').textContent = `(${stockUnit})`;
+  updateDirectOrderTotal();
   document.getElementById('direct-order-address').value = '';
+  document.getElementById('direct-order-address').disabled = false;
+  document.getElementById('direct-order-address').placeholder = 'Enter delivery address';
   document.getElementById('direct-order-payment').value = 'COD';
+  document.getElementById('direct-order-company').value = '';
   document.getElementById('direct-order-rider').value = '';
+  document.getElementById('direct-order-rider').innerHTML = `<option value="">Any Rider from Company</option>`;
+  document.getElementById('direct-order-rider').disabled = false;
   openModal('modal-direct-order');
+}
+
+function updateDirectOrderTotal() {
+  const prodId = document.getElementById('direct-order-prod-id').value;
+  const qty = parseInt(document.getElementById('direct-order-qty').value) || 1;
+  const prod = DB.get('products').find(p => p.id === prodId);
+  const totalEl = document.getElementById('direct-order-total');
+  if (!prod || !totalEl) return;
+
+  const subtotal = prod.price * qty;
+  const total = subtotal + HANDLING_FEE;
+  totalEl.innerHTML = `
+    <div>₱${total.toFixed(2)}</div>
+    <div style="font-size:11px;color:var(--muted);font-weight:500;margin-top:3px">
+      Items: ₱${subtotal.toFixed(2)} + Handling fee: ₱${HANDLING_FEE.toFixed(2)}
+    </div>`;
+}
+
+function updateDirectOrderRiders() {
+  const company = document.getElementById('direct-order-company').value;
+  const riderSelect = document.getElementById('direct-order-rider');
+  setPickupFormState('direct-order-address', 'direct-order-rider', company);
+  if (isPickupOption(company)) {
+    return;
+  }
+
+  const riders = DB.get('users').filter(u => u.role === 'rider' && u.company === company);
+  riderSelect.innerHTML = `<option value="">Any Rider from Company</option>${riders.map(r => `<option value="${r.id}">${r.name}</option>`).join('')}`;
+  riderSelect.value = '';
+  riderSelect.disabled = false;
 }
 
 function handlePaymentChange(selectId) {
@@ -710,18 +849,22 @@ function handlePaymentChange(selectId) {
 function submitDirectOrder() {
   const prodId    = document.getElementById('direct-order-prod-id').value;
   const qty       = parseInt(document.getElementById('direct-order-qty').value);
-  const address   = document.getElementById('direct-order-address').value.trim();
+  const addressInput = document.getElementById('direct-order-address').value.trim();
   const payMethod = document.getElementById('direct-order-payment').value;
-  const riderId   = document.getElementById('direct-order-rider').value || null;
+  const company   = document.getElementById('direct-order-company').value;
+  const isPickup = isPickupOption(company);
+  const riderId   = isPickup ? null : document.getElementById('direct-order-rider').value || null;
+  const address = isPickup ? 'Store pickup' : addressInput;
 
-  if (!prodId || !qty || !address) return alert('Please fill in all order fields.');
+  if (!prodId || !qty || (!isPickup && !address)) return alert('Please fill in all order fields.');
+  if (!company) return alert('Please select a delivery option.');
 
   const prod = DB.get('products').find(p => p.id === prodId);
   if (!prod) return alert('Product not found.');
   if (prod.stock < qty) return alert(`Only ${prod.stock} in stock.`);
 
   const rider = riderId ? DB.get('users').find(u => u.id === riderId) : null;
-  const orderId = createOrder(prod, qty, address, payMethod, riderId || null, rider ? rider.name : null);
+  const orderId = createOrder(prod, qty, address, payMethod, riderId || null, rider ? rider.name : null, company);
   closeModal('modal-direct-order');
   alert(`✅ Order ${orderId} placed successfully!`);
   renders.orders();
@@ -802,26 +945,60 @@ function checkoutCart() {
   const cart = getCart();
   if (!cart.length) return alert('Your cart is empty.');
 
-  const total = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
+  const subtotal = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
+  const total = subtotal + HANDLING_FEE;
   document.getElementById('cart-checkout-content').innerHTML = `
     <div style="margin-bottom:16px;font-size:14px;font-weight:700;">${cart.length} item(s) • ₱${total.toFixed(2)}</div>
-    ${cart.map(item => `<div style="font-size:13px;margin-bottom:8px">${item.qty} ${item.stockUnit || 'unit'} of ${item.name} — ₱${item.price.toFixed(2)} ${item.priceUnit || 'per unit'}</div>`).join('')}`;
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Includes one ₱${HANDLING_FEE.toFixed(2)} handling fee for this checkout.</div>
+    ${cart.map(item => `<div style="font-size:13px;margin-bottom:8px">${item.qty} ${item.stockUnit || 'unit'} of ${item.name} — ₱${(item.price * item.qty).toFixed(2)}</div>`).join('')}`;
   document.getElementById('cart-checkout-address').value = '';
+  document.getElementById('cart-checkout-address').disabled = false;
+  document.getElementById('cart-checkout-address').placeholder = 'Enter delivery address';
   document.getElementById('cart-checkout-payment').value = 'COD';
+
   const riders = DB.get('users').filter(u => u.role === 'rider');
+  const companies = [...new Set(riders.map(r => r.company).filter(Boolean))];
+
+  const companySelect = document.getElementById('cart-checkout-company');
+  if (companySelect) {
+    companySelect.innerHTML = deliveryOptionsHtml(companies);
+    companySelect.value = '';
+  }
+
   const riderSelect = document.getElementById('cart-checkout-rider');
   if (riderSelect) {
-    riderSelect.innerHTML = `<option value="">Company Delivery</option>${riders.map(r => `<option value="${r.id}">${r.name}</option>`).join('')}`;
+    riderSelect.innerHTML = `<option value="">Any Rider from Company</option>`;
+    riderSelect.value = '';
+    riderSelect.disabled = false;
   }
+
   openModal('modal-checkout-cart');
 }
 
+function updateCartCheckoutRiders() {
+  const company = document.getElementById('cart-checkout-company').value;
+  const riderSelect = document.getElementById('cart-checkout-rider');
+  setPickupFormState('cart-checkout-address', 'cart-checkout-rider', company);
+  if (isPickupOption(company)) {
+    return;
+  }
+
+  const riders = DB.get('users').filter(u => u.role === 'rider' && u.company === company);
+  riderSelect.innerHTML = `<option value="">Any Rider from Company</option>${riders.map(r => `<option value="${r.id}">${r.name}</option>`).join('')}`;
+  riderSelect.value = '';
+  riderSelect.disabled = false;
+}
+
 function submitCartCheckout() {
-  const address = document.getElementById('cart-checkout-address').value.trim();
+  const addressInput = document.getElementById('cart-checkout-address').value.trim();
   const payMethod = document.getElementById('cart-checkout-payment').value;
+  const company = document.getElementById('cart-checkout-company').value;
+  const isPickup = isPickupOption(company);
+  const address = isPickup ? 'Store pickup' : addressInput;
   const cart = getCart();
 
-  if (!address) return alert('Please enter delivery address.');
+  if (!isPickup && !address) return alert('Please enter delivery address.');
+  if (!company) return alert('Please select a delivery option.');
   if (!cart.length) return alert('Your cart is empty.');
 
   const prods = DB.get('products');
@@ -831,33 +1008,33 @@ function submitCartCheckout() {
     if (prod.stock < item.qty) return alert(`Not enough stock for ${item.name}.`);
   }
 
-  const riderId = (document.getElementById('cart-checkout-rider') || {}).value || '';
-  const created = [];
-  cart.forEach(item => {
-    const prod = DB.get('products').find(p => p.id === item.id);
-    if (prod) {
-      const rider = riderId ? DB.get('users').find(u => u.id === riderId) : null;
-      created.push(createOrder(prod, item.qty, address, payMethod, riderId || null, rider ? rider.name : null));
-    }
-  });
+  const riderId = isPickup ? '' : (document.getElementById('cart-checkout-rider') || {}).value || '';
+  const rider = riderId ? DB.get('users').find(u => u.id === riderId) : null;
+  const orderId = createCheckoutOrder(cart, address, payMethod, riderId || null, rider ? rider.name : null, company);
 
   saveCart([]);
   closeModal('modal-checkout-cart');
   renderCart();
   renders.orders();
   renders.products();
-  alert(`✅ Created ${created.length} order(s) from cart.`);
+  alert(`✅ Order ${orderId} created from cart.`);
 }
 
-function createOrder(prod, qty, address, payMethod, riderId = null, riderName = null) {
+function createOrder(prod, qty, address, payMethod, riderId = null, riderName = null, company = null, checkoutId = null, handlingFee = HANDLING_FEE) {
   const orderId = DB.nextId('orders');
-  const total   = prod.price * qty;
+  const orderCheckoutId = checkoutId || orderId;
+  const isPickup = isPickupOption(company);
+  const subtotal = prod.price * qty;
+  const total = subtotal + handlingFee;
 
   const orders = DB.get('orders');
   orders.push({
-    id: orderId, productId: prod.id, productName: prod.name, qty, qtyUnit: prod.stockUnit || 'unit', total,
+    id: orderId, checkoutId: orderCheckoutId, productId: prod.id, productName: prod.name, qty, qtyUnit: prod.stockUnit || 'unit', total,
+    subtotal, handlingFee,
     customerId: currentUser.id, customerName: currentUser.name,
     vendorId: prod.vendorId, vendorName: prod.vendorName,
+    fulfillmentOption: isPickup ? 'Pickup' : 'Delivery',
+    deliveryOption: isPickup ? 'Pickup' : company,
     payMethod, payStatus: 'Pending',
     address, status: 'Pending', date: now()
   });
@@ -871,27 +1048,121 @@ function createOrder(prod, qty, address, payMethod, riderId = null, riderName = 
 
   const pays = DB.get('payments');
   pays.push({
-    id: DB.nextId('payments'), orderId, amount: total, method: payMethod,
+    id: DB.nextId('payments'), orderId, checkoutId: orderCheckoutId, amount: total, method: payMethod,
     status: 'Pending',
     customerId: currentUser.id, customerName: currentUser.name,
     vendorId: prod.vendorId, vendorName: prod.vendorName, date: now()
   });
   DB.set('payments', pays);
 
-  const deliveries = DB.get('deliveries');
-  deliveries.push({
-    id: DB.nextId('deliveries'), orderId, address,
-    customerId: currentUser.id, customerName: currentUser.name, customerEmail: currentUser.email,
-    vendorId: prod.vendorId, vendorName: prod.vendorName,
-    productName: prod.name, qty, qtyUnit: prod.stockUnit || 'unit', riderId: riderId || null, riderName: riderName || null,
-    status: riderId ? 'Assigned' : 'Pending',
-    timeline: [
-      { label: 'Awaiting Pickup',   time: riderId ? now() : null },
-      { label: 'Out for Delivery',  time: null },
-      { label: 'Delivered',         time: null }
-    ]
+  if (!isPickup) {
+    const deliveries = DB.get('deliveries');
+    deliveries.push({
+      id: DB.nextId('deliveries'), orderId, checkoutId: orderCheckoutId, address,
+      customerId: currentUser.id, customerName: currentUser.name, customerEmail: currentUser.email,
+      vendorId: prod.vendorId, vendorName: prod.vendorName,
+      productName: prod.name, qty, qtyUnit: prod.stockUnit || 'unit', riderId: riderId || null, riderName: riderName || null,
+      company: company || null,
+      status: riderId ? 'Assigned' : 'Pending',
+      timeline: [
+        { label: 'Awaiting Pickup',   time: riderId ? now() : null },
+        { label: 'Out for Delivery',  time: null },
+        { label: 'Delivered',         time: null }
+      ]
+    });
+    DB.set('deliveries', deliveries);
+  }
+
+  return orderId;
+}
+
+function createCheckoutOrder(cart, address, payMethod, riderId = null, riderName = null, company = null) {
+  const orderId = DB.nextId('orders');
+  const isPickup = isPickupOption(company);
+  const prods = DB.get('products');
+  const items = cart.map(item => {
+    const prod = prods.find(p => p.id === item.id);
+    return {
+      productId: prod.id,
+      productName: prod.name,
+      id: orderId,
+      orderId,
+      qty: item.qty,
+      qtyUnit: prod.stockUnit || item.stockUnit || 'unit',
+      subtotal: prod.price * item.qty,
+      vendorId: prod.vendorId,
+      vendorName: prod.vendorName
+    };
   });
-  DB.set('deliveries', deliveries);
+  const vendorIds = [...new Set(items.map(item => item.vendorId))];
+  const vendorNames = [...new Set(items.map(item => item.vendorName))];
+  const subtotal = items.reduce((sum, item) => sum + item.subtotal, 0);
+  const total = subtotal + HANDLING_FEE;
+  const productName = items.length === 1 ? items[0].productName : `${items.length} items`;
+  const totalQty = items.reduce((sum, item) => sum + item.qty, 0);
+
+  const orders = DB.get('orders');
+  orders.push({
+    id: orderId,
+    checkoutId: orderId,
+    productId: items.length === 1 ? items[0].productId : null,
+    productName,
+    qty: totalQty,
+    qtyUnit: items.length === 1 ? items[0].qtyUnit : 'items',
+    total,
+    subtotal,
+    handlingFee: HANDLING_FEE,
+    items,
+    customerId: currentUser.id,
+    customerName: currentUser.name,
+    vendorId: vendorIds[0],
+    vendorIds,
+    vendorName: vendorNames.length === 1 ? vendorNames[0] : 'Multiple Vendors',
+    vendorNames,
+    fulfillmentOption: isPickup ? 'Pickup' : 'Delivery',
+    deliveryOption: isPickup ? 'Pickup' : company,
+    payMethod,
+    payStatus: 'Pending',
+    address,
+    status: 'Pending',
+    date: now()
+  });
+  DB.set('orders', orders);
+
+  items.forEach(item => {
+    const prod = prods.find(p => p.id === item.productId);
+    if (prod) prod.stock -= item.qty;
+  });
+  DB.set('products', prods);
+
+  const pays = DB.get('payments');
+  pays.push({
+    id: DB.nextId('payments'), orderId, checkoutId: orderId, amount: total, method: payMethod,
+    status: 'Pending',
+    customerId: currentUser.id, customerName: currentUser.name,
+    vendorId: vendorIds[0], vendorIds, vendorName: vendorNames.length === 1 ? vendorNames[0] : 'Multiple Vendors',
+    date: now()
+  });
+  DB.set('payments', pays);
+
+  if (!isPickup) {
+    const deliveries = DB.get('deliveries');
+    deliveries.push({
+      id: DB.nextId('deliveries'), orderId, checkoutId: orderId, address,
+      customerId: currentUser.id, customerName: currentUser.name, customerEmail: currentUser.email,
+      vendorId: vendorIds[0], vendorIds, vendorName: vendorNames.length === 1 ? vendorNames[0] : 'Multiple Vendors',
+      productName, qty: totalQty, qtyUnit: items.length === 1 ? items[0].qtyUnit : 'items', items,
+      riderId: riderId || null, riderName: riderName || null,
+      company: company || null,
+      status: riderId ? 'Assigned' : 'Pending',
+      timeline: [
+        { label: 'Awaiting Pickup',   time: riderId ? now() : null },
+        { label: 'Out for Delivery',  time: null },
+        { label: 'Delivered',         time: null }
+      ]
+    });
+    DB.set('deliveries', deliveries);
+  }
 
   return orderId;
 }
@@ -975,7 +1246,7 @@ function vendorConfirmPayment(orderId) {
   const orders = DB.get('orders');
   const ord = orders.find(o => o.id === orderId);
   if (!ord) return alert('Order not found.');
-  if (ord.vendorId !== currentUser.id) return alert('You are not the vendor for this order.');
+  if (!orderHasVendor(ord, currentUser.id)) return alert('You are not the vendor for this order.');
 
   // ── 1. Mark order as Paid ──
   ord.payStatus = 'Paid';
@@ -1000,21 +1271,63 @@ function confirmPayment(orderId) {
 }
 
 function viewOrderDetail(id) {
-  const o = DB.get('orders').find(x => x.id === id);
+  const orders = DB.get('orders');
+  const o = orders.find(x => x.id === id);
+  if (!o) return alert('Order not found.');
+
+  const checkoutId = o.checkoutId || o.id;
+  const checkoutOrders = orders.filter(x => (x.checkoutId || x.id) === checkoutId);
+  const deliveries = DB.get('deliveries');
+  const delivery = deliveries.find(d => d.orderId === id);
+  const checkoutDeliveries = deliveries.filter(d => (d.checkoutId || d.orderId) === checkoutId);
+  const detailItems = o.items && o.items.length
+    ? o.items
+    : checkoutOrders.map(item => ({
+        productName: item.productName,
+        qty: item.qty,
+        qtyUnit: item.qtyUnit || 'unit',
+        subtotal: item.subtotal ?? (item.total - (item.handlingFee || 0)),
+        orderId: item.id
+      }));
+  const itemSubtotal = detailItems.reduce((sum, item) => sum + item.subtotal, 0);
+  const handlingFee = checkoutOrders.reduce((sum, item) => sum + (item.handlingFee || 0), 0);
+  const checkoutTotal = itemSubtotal + handlingFee;
+
   document.getElementById('order-detail-content').innerHTML = `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-      <div><div style="font-size:11px;color:var(--muted);font-weight:700">ORDER ID</div><div style="font-weight:700">${o.id}</div></div>
+      <div><div style="font-size:11px;color:var(--muted);font-weight:700">CHECKOUT ID</div><div style="font-weight:700">${checkoutId}</div></div>
       <div><div style="font-size:11px;color:var(--muted);font-weight:700">DATE</div><div>${o.date}</div></div>
-      <div><div style="font-size:11px;color:var(--muted);font-weight:700">PRODUCT</div><div>${o.productName}</div></div>
-      <div><div style="font-size:11px;color:var(--muted);font-weight:700">QUANTITY</div><div>${o.qty} ${o.qtyUnit || 'unit'}</div></div>
-      <div><div style="font-size:11px;color:var(--muted);font-weight:700">TOTAL</div><div style="font-weight:700;color:var(--g700)">₱${o.total.toFixed(2)}</div></div>
+      <div style="grid-column:span 2">
+        <div style="font-size:11px;color:var(--muted);font-weight:700;margin-bottom:6px">ITEMS</div>
+        ${detailItems.map(item => `
+          <div style="display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--line)">
+            <div>${item.productName}<div style="font-size:11px;color:var(--muted)">${item.qty} ${item.qtyUnit || 'unit'} • Order ${item.id}</div></div>
+            <div style="font-weight:700">₱${(item.subtotal ?? (item.total - (item.handlingFee || 0))).toFixed(2)}</div>
+          </div>
+        `).join('')}
+      </div>
+      <div><div style="font-size:11px;color:var(--muted);font-weight:700">ITEM SUBTOTAL</div><div>₱${itemSubtotal.toFixed(2)}</div></div>
+      <div><div style="font-size:11px;color:var(--muted);font-weight:700">HANDLING FEE</div><div>₱${handlingFee.toFixed(2)}</div></div>
+      <div><div style="font-size:11px;color:var(--muted);font-weight:700">CHECKOUT TOTAL</div><div style="font-weight:700;color:var(--g700)">₱${checkoutTotal.toFixed(2)}</div></div>
       <div><div style="font-size:11px;color:var(--muted);font-weight:700">STATUS</div><div><span class="badge ${statusBadge(o.status)}">${o.status}</span></div></div>
       <div><div style="font-size:11px;color:var(--muted);font-weight:700">CUSTOMER</div><div>${o.customerName}</div></div>
       <div><div style="font-size:11px;color:var(--muted);font-weight:700">VENDOR</div><div>${o.vendorName}</div></div>
-      <div style="grid-column:span 2"><div style="font-size:11px;color:var(--muted);font-weight:700">DELIVERY ADDRESS</div><div>${o.address}</div></div>
+      <div><div style="font-size:11px;color:var(--muted);font-weight:700">DELIVERY OPTION</div><div>${o.fulfillmentOption || (o.deliveryOption === 'Pickup' ? 'Pickup' : 'Delivery')}</div></div>
+      <div><div style="font-size:11px;color:var(--muted);font-weight:700">${(o.fulfillmentOption || '').toLowerCase() === 'pickup' ? 'PICKUP LOCATION' : 'DELIVERY ADDRESS'}</div><div>${o.address}</div></div>
       <div><div style="font-size:11px;color:var(--muted);font-weight:700">PAYMENT METHOD</div><div>${o.payMethod}</div></div>
       <div><div style="font-size:11px;color:var(--muted);font-weight:700">PAYMENT STATUS</div>
            <div><span class="badge ${o.payStatus === 'Paid' ? 'badge-green' : 'badge-orange'}">${o.payStatus}</span></div></div>
+      ${delivery ? `
+        <div style="grid-column:span 2">
+          <div style="font-size:11px;color:var(--muted);font-weight:700;margin-bottom:6px">DELIVERIES</div>
+          ${checkoutDeliveries.map(d => `
+            <div style="display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--line)">
+              <div>${d.productName}<div style="font-size:11px;color:var(--muted)">Order ${d.orderId} • ${d.riderName || 'Not yet assigned'}</div></div>
+              <div><span class="badge ${delivBadge(d.status)}">${d.status}</span></div>
+            </div>
+          `).join('')}
+        </div>
+      ` : ''}
     </div>`;
   openModal('modal-order-detail');
 }
@@ -1035,13 +1348,48 @@ function assignRider(delId, riderId) {
     updateTimeline(del, 'Awaiting Pickup');
     DB.set('deliveries', dels);
   }
+  if (renders.orders) renders.orders();
   renders.delivery();
+}
+
+function claimDelivery(delId) {
+  if (!currentUser || currentUser.role !== 'rider') {
+    return alert('Only riders can choose a delivery.');
+  }
+
+  const dels = DB.get('deliveries');
+  const del = dels.find(d => d.id === delId);
+  if (!del) return alert('Delivery not found.');
+  if (del.riderId && del.riderId !== currentUser.id) {
+    return alert('This delivery has already been chosen by another rider.');
+  }
+
+  const orders = DB.get('orders');
+  const ord = orders.find(o => o.id === del.orderId);
+  if (!ord || ord.status === 'Delivered' || ord.status === 'Cancelled') {
+    return alert('This order is no longer available.');
+  }
+
+  del.riderId = currentUser.id;
+  del.riderName = currentUser.name;
+  del.status = 'Assigned';
+  updateTimeline(del, 'Awaiting Pickup');
+  DB.set('deliveries', dels);
+
+  renders.orders();
+  renders.delivery();
+  if (renders.dashboard) renders.dashboard();
+  alert(`Delivery ${del.id} is now assigned to you.`);
 }
 
 function updateDelivery(id, status) {
   const dels = DB.get('deliveries');
   const del  = dels.find(d => d.id === id);
   if (del) {
+    if (currentUser && currentUser.role === 'rider' && del.riderId !== currentUser.id) {
+      return alert('Choose this delivery first before updating it.');
+    }
+
     del.status = status;
     updateTimeline(del, status);
     DB.set('deliveries', dels);
@@ -1058,6 +1406,8 @@ function updateDelivery(id, status) {
       // ✅ Do NOT auto-mark payment as Paid — vendor must confirm
     }
   }
+  if (renders.orders) renders.orders();
+  if (renders.dashboard) renders.dashboard();
   renders.delivery();
 }
 
@@ -1127,6 +1477,7 @@ function statusBadge(s) {
     Pending:    'badge-orange',
     Processing: 'badge-blue',
     Shipped:    'badge-blue',
+    'Ready for pickup': 'badge-blue',
     Delivered:  'badge-green',
     Cancelled:  'badge-red'
   }[s] || 'badge-gray';
