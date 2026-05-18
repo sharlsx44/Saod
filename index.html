@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SAOD — Smart Automated Order & Delivery</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Syne:wght@700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- ═══════════════════ AUTH ═══════════════════ -->
+<div id="auth-screen">
+  <div class="auth-card">
+    <div class="auth-logo">
+      <div class="auth-logo-icon">🌿</div>
+      <div>
+        <div class="auth-logo-text">SAOD</div>
+        <div class="auth-logo-sub">Smart Automated Order & Delivery</div>
+      </div>
+    </div>
+    <div class="auth-tabs">
+      <div class="auth-tab active" onclick="switchTab('login')">Sign In</div>
+      <div class="auth-tab" onclick="switchTab('register')">Register</div>
+    </div>
+
+    <!-- LOGIN -->
+    <div class="auth-form active" id="login-form">
+      <div class="form-group">
+        <label>Email Address</label>
+        <input type="email" id="login-email" placeholder="you@email.com">
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" id="login-pass" placeholder="••••••••">
+      </div>
+      <div id="login-msg"></div>
+      <button class="btn btn-primary" onclick="login()">🔑 Sign In</button>
+    </div>
+
+    <!-- REGISTER -->
+    <div class="auth-form" id="register-form">
+      <div class="form-group">
+        <label id="reg-name-label">Full Name</label>
+        <input type="text" id="reg-name" placeholder="Juan dela Cruz">
+      </div>
+      <div class="form-group">
+        <label>Email Address</label>
+        <input type="email" id="reg-email" placeholder="you@email.com">
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" id="reg-pass" placeholder="Min. 6 characters">
+      </div>
+      <div class="form-group">
+        <label>Register As</label>
+        <div class="auth-role-grid" id="role-selector">
+          <div class="role-card selected" data-role="customer" onclick="selectRole(this)">
+            <span class="icon">🛒</span>Customer
+          </div>
+          <div class="role-card" data-role="vendor" onclick="selectRole(this)">
+            <span class="icon">🏪</span>Vendor
+          </div>
+          <div class="role-card" data-role="rider" onclick="selectRole(this)">
+            <span class="icon">🚴</span>Rider
+          </div>
+        </div>
+      </div>
+      <div id="reg-msg"></div>
+      <button class="btn btn-primary" onclick="register()">✅ Create Account</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ APP ═══════════════════ -->
+<div id="app">
+  <header>
+    <div class="hdr-logo">SAOD</div>
+    <div class="hdr-right">
+      <div class="hdr-user">
+        <div class="hdr-avatar" id="hdr-initial">U</div>
+        <div>
+          <div style="font-weight:600;font-size:13px" id="hdr-name">User</div>
+          <div class="hdr-role" id="hdr-role">Customer</div>
+        </div>
+      </div>
+      <button class="btn-logout" onclick="logout()">Sign Out</button>
+    </div>
+  </header>
+
+  <nav id="main-nav">
+    <div class="nav-item active" onclick="showPage('dashboard')" id="nav-dashboard">
+      <span class="nav-icon">🏠</span> Dashboard
+    </div>
+    <div class="nav-item" onclick="showPage('products')" id="nav-products">
+      <span class="nav-icon">📦</span> Products
+    </div>
+    <div class="nav-item" onclick="showPage('cart')" id="nav-cart" style="display:none">
+      <span class="nav-icon">🛍️</span> Cart
+    </div>
+    <div class="nav-item" onclick="showPage('orders')" id="nav-orders">
+      <span class="nav-icon">🧾</span> Orders
+    </div>
+    <div class="nav-item" onclick="showPage('payments')" id="nav-payments">
+      <span class="nav-icon">💳</span> Payments
+    </div>
+    <div class="nav-item" onclick="showPage('delivery')" id="nav-delivery">
+      <span class="nav-icon">🚚</span> Delivery
+    </div>
+    <div class="nav-item" onclick="showPage('users')" id="nav-users" style="display:none">
+      <span class="nav-icon">👥</span> Users
+    </div>
+  </nav>
+
+  <main>
+
+    <!-- ── DASHBOARD ── -->
+    <div class="page active" id="page-dashboard">
+      <div class="page-title">Dashboard</div>
+      <div class="page-sub" id="dash-welcome">Welcome back!</div>
+      <div class="stat-grid" id="stat-grid"></div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">📋 Recent Orders</div>
+        </div>
+        <div style="overflow-x:auto">
+          <table>
+            <thead><tr><th>Order ID</th><th>Product</th><th>Customer</th><th>Amount</th><th>Status</th><th>Date</th></tr></thead>
+            <tbody id="dash-recent-orders"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── PRODUCTS ── -->
+    <div class="page" id="page-products">
+      <div class="page-title">Product Listings</div>
+      <div class="page-sub">Browse available products and order directly.</div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">📦 All Products</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+            <button class="btn btn-primary btn-sm" id="btn-add-product" onclick="openModal('modal-product')">+ Add Product</button>
+          </div>
+        </div>
+        <div class="card-body" style="padding:0">
+          <div style="padding:12px">
+            <div style="margin-bottom:8px">
+              <input type="search" id="product-search" placeholder="Search products..." oninput="renders.products()" class="search-input">
+            </div>
+            <div class="category-grid" id="category-grid"></div>
+          </div>
+          <div class="product-grid" id="products-table"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── CART ── -->
+    <div class="page" id="page-cart">
+      <div class="page-title">My Cart</div>
+      <div class="page-sub">Review item quantities, update totals, and checkout.</div>
+      <div class="card">
+        <div class="card-body" id="cart-page-body"></div>
+      </div>
+    </div>
+
+    <!-- ── ORDERS ── -->
+    <div class="page" id="page-orders">
+      <div class="page-title">Orders</div>
+      <div class="page-sub">Process and track customer orders</div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">🧾 Order Records</div>
+        </div>
+        <div style="overflow-x:auto">
+          <table>
+            <thead><tr><th>Order ID</th><th>Product</th><th>Qty</th><th>Total</th><th>Customer</th><th>Payment</th><th>Status</th><th>Actions</th></tr></thead>
+            <tbody id="orders-table"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── PAYMENTS ── -->
+    <div class="page" id="page-payments">
+      <div class="page-title">Payment Records</div>
+      <div class="page-sub">View all payment transactions</div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">💳 Payment Transactions</div>
+        </div>
+        <div style="overflow-x:auto">
+          <table>
+            <thead>
+              <tr>
+                <th>Payment ID</th>
+                <th>Order ID</th>
+                <th>Customer</th>
+                <th>Amount</th>
+                <th>Method</th>
+                <th>Status</th>
+                <th>Date</th>
+              </tr>
+            </thead>
+            <tbody id="payments-table"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── DELIVERY ── -->
+    <div class="page" id="page-delivery">
+      <div class="page-title">Delivery & Tracking</div>
+      <div class="page-sub">Manage shipments and live order tracking</div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">🚚 Deliveries</div>
+        </div>
+        <div style="overflow-x:auto">
+          <table>
+            <thead><tr><th>Delivery ID</th><th>Order ID</th><th>Customer</th><th>Address</th><th>Rider</th><th>Status</th><th>Actions</th></tr></thead>
+            <tbody id="delivery-table"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── USERS ── -->
+    <div class="page" id="page-users">
+      <div class="page-title">User Accounts</div>
+      <div class="page-sub">All registered users in the system</div>
+      <div class="card">
+        <div style="overflow-x:auto">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Role</th>
+                <th>Joined</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="users-table"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- ═══════════════════ MODALS ═══════════════════ -->
+
+<!-- Add Product -->
+<div class="modal-overlay" id="modal-product">
+  <div class="modal">
+    <div class="modal-title">📦 Add / Edit Product</div>
+    <input type="hidden" id="product-edit-id">
+    <div class="form-grid">
+      <div class="form-group">
+        <label>Product Name</label>
+        <input type="text" id="prod-name" placeholder="e.g. Fresh Tomatoes">
+      </div>
+      <div class="form-group">
+        <label>Category</label>
+        <select id="prod-cat">
+          <option>Vegetables</option>
+          <option>Fruits</option>
+          <option>Meat & Poultry</option>
+          <option>Seafood</option>
+          <option>Dairy</option>
+          <option>Grains & Rice</option>
+          <option>Beverages</option>
+          <option>Snacks</option>
+          <option>Other</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Price (₱)</label>
+        <div style="display:flex;gap:8px">
+          <input type="number" id="prod-price" placeholder="0.00" min="0" step="0.01" style="flex:1">
+          <select id="prod-price-unit" style="flex:0.8;min-width:80px">
+            <option value="per unit">per unit</option>
+            <option value="per kg">per kg</option>
+            <option value="per g">per g</option>
+            <option value="per L">per L</option>
+            <option value="per ml">per ml</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Stock Quantity</label>
+        <div style="display:flex;gap:8px">
+          <input type="number" id="prod-stock" placeholder="0" min="0" style="flex:1">
+          <select id="prod-stock-unit" style="flex:0.5;min-width:60px">
+            <option value="unit">unit</option>
+            <option value="kg">kg</option>
+            <option value="g">g</option>
+            <option value="L">L</option>
+            <option value="ml">ml</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group span2">
+        <label>Description</label>
+        <input type="text" id="prod-desc" placeholder="Short description...">
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-outline btn-sm" onclick="closeModal('modal-product')">Cancel</button>
+      <button class="btn btn-primary btn-sm" onclick="saveProduct()">💾 Save Product</button>
+    </div>
+  </div>
+</div>
+
+<!-- Order Detail -->
+<div class="modal-overlay" id="modal-order-detail">
+  <div class="modal">
+    <div class="modal-title">🧾 Order Details</div>
+    <div id="order-detail-content"></div>
+    <div class="form-actions" style="margin-top:16px">
+      <button class="btn btn-outline btn-sm" onclick="closeModal('modal-order-detail')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Tracking Modal -->
+<div class="modal-overlay" id="modal-tracking">
+  <div class="modal">
+    <div class="modal-title">📍 Delivery Tracking</div>
+    <div id="tracking-content"></div>
+    <div class="form-actions" style="margin-top:16px">
+      <button class="btn btn-outline btn-sm" onclick="closeModal('modal-tracking')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Direct Order Modal -->
+<div class="modal-overlay" id="modal-direct-order">
+  <div class="modal">
+    <div class="modal-title">🛒 Order Product</div>
+    <input type="hidden" id="direct-order-prod-id">
+    <div class="form-grid">
+      <div class="form-group">
+        <label>Product</label>
+        <input type="text" id="direct-order-prod-name" readonly>
+      </div>
+      <div class="form-group">
+        <label>Quantity <span id="direct-order-unit-label" style="font-size:11px;color:var(--muted);font-weight:400"></span></label>
+        <input type="number" id="direct-order-qty" value="1" min="1">
+      </div>
+      <div class="form-group span2">
+        <label>Delivery Address</label>
+        <input type="text" id="direct-order-address" placeholder="Enter delivery address">
+      </div>
+      <div class="form-group span2">
+        <label>Delivery Service</label>
+        <select id="direct-order-rider">
+          <option value="">Company Delivery</option>
+        </select>
+      </div>
+      <div class="form-group span2">
+        <label>Payment Method</label>
+        <select id="direct-order-payment" onchange="handlePaymentChange('direct-order-payment')">
+          <option value="COD">Cash on Delivery</option>
+          <option value="GCash">GCash</option>
+        </select>
+        <div id="direct-order-gcash-info" style="display:none;margin-top:12px;padding:12px;background:#e8f5e9;border-radius:8px;font-size:13px;color:#2e7d32">
+          <div style="font-weight:600;margin-bottom:6px">💳 Send payment to:</div>
+          <div style="font-size:16px;font-weight:700;font-family:monospace;letter-spacing:2px">09123456789</div>
+        </div>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-outline btn-sm" onclick="closeModal('modal-direct-order')">Cancel</button>
+      <button class="btn btn-primary btn-sm" onclick="submitDirectOrder()">✅ Place Order</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add to Cart Modal -->
+<div class="modal-overlay" id="modal-add-cart">
+  <div class="modal">
+    <div class="modal-title">➕ Add to Cart</div>
+    <input type="hidden" id="add-cart-prod-id">
+    <div class="form-grid">
+      <div class="form-group">
+        <label>Product</label>
+        <input type="text" id="add-cart-prod-name" readonly>
+      </div>
+      <div class="form-group">
+        <label>Quantity <span id="add-cart-unit-label" style="font-size:11px;color:var(--muted);font-weight:400"></span></label>
+        <input type="number" id="add-cart-qty" value="1" min="1" oninput="updateAddCartTotal()">
+      </div>
+      <div class="form-group span2">
+        <label>Total Price</label>
+        <div id="add-cart-total" style="font-weight:700;color:var(--g700);padding:12px 16px;background:var(--g50);border-radius:10px;">₱0.00</div>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-outline btn-sm" onclick="closeModal('modal-add-cart')">Cancel</button>
+      <button class="btn btn-primary btn-sm" onclick="submitAddToCart()">✅ Add to Cart</button>
+    </div>
+  </div>
+</div>
+
+<!-- Cart Checkout Modal -->
+<div class="modal-overlay" id="modal-checkout-cart">
+  <div class="modal">
+    <div class="modal-title">🧾 Checkout Cart</div>
+    <div id="cart-checkout-content"></div>
+    <div class="form-grid">
+      <div class="form-group span2">
+        <label>Delivery Address</label>
+        <input type="text" id="cart-checkout-address" placeholder="Enter delivery address">
+      </div>
+      <div class="form-group span2">
+        <label>Payment Method</label>
+        <select id="cart-checkout-payment" onchange="handlePaymentChange('cart-checkout-payment')">
+          <option value="COD">Cash on Delivery</option>
+          <option value="GCash">GCash</option>
+        </select>
+        <div id="cart-checkout-gcash-info" style="display:none;margin-top:12px;padding:12px;background:#e8f5e9;border-radius:8px;font-size:13px;color:#2e7d32">
+          <div style="font-weight:600;margin-bottom:6px">💳 Send payment to:</div>
+          <div style="font-size:16px;font-weight:700;font-family:monospace;letter-spacing:2px">09123456789</div>
+        </div>
+      </div>
+      <div class="form-group span2">
+        <label>Rider</label>
+        <select id="cart-checkout-rider">
+          <option value="">No preference</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-outline btn-sm" onclick="closeModal('modal-checkout-cart')">Cancel</button>
+      <button class="btn btn-primary btn-sm" onclick="submitCartCheckout()">✅ Confirm Checkout</button>
+    </div>
+  </div>
+</div>
+
+<script src="js/app.js"></script>
+</body>
+</html>
