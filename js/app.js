@@ -1,21 +1,44 @@
 // ═══════════════════════════════════════════
 //  SAOD — Smart Automated Order & Delivery
-//  Local Database (localStorage)
+//  Local Database (js/database.js)
 // ═══════════════════════════════════════════
 
 const DB = {
-  get(k) {
-    try { return JSON.parse(localStorage.getItem('saod_' + k) || 'null'); }
-    catch (e) { return null; }
+  keys: ['users', 'products', 'orders', 'payments', 'deliveries', 'id_seq'],
+  data: null,
+  persistTimer: null,
+  persistWarningShown: false,
+  clone(value) {
+    return JSON.parse(JSON.stringify(value));
   },
-  set(k, v) { localStorage.setItem('saod_' + k, JSON.stringify(v)); },
+  defaults() {
+    return this.clone(window.SAOD_LOCAL_DATABASE || {
+      users: [],
+      products: [],
+      orders: [],
+      payments: [],
+      deliveries: [],
+      id_seq: { users: 0, products: 0, orders: 0, payments: 0, deliveries: 0 }
+    });
+  },
+  get(k) {
+    if (!this.data) this.data = this.defaults();
+    return this.data[k] === undefined ? null : this.clone(this.data[k]);
+  },
+  set(k, v) {
+    if (!this.data) this.data = this.defaults();
+    this.data[k] = this.clone(v);
+    window.SAOD_LOCAL_DATABASE = this.clone(this.data);
+    this.schedulePersist();
+  },
   init() {
-    if (!this.get('users'))      this.set('users', []);
-    if (!this.get('products'))   this.set('products', []);
-    if (!this.get('orders'))     this.set('orders', []);
-    if (!this.get('payments'))   this.set('payments', []);
-    if (!this.get('deliveries')) this.set('deliveries', []);
-    if (!this.get('id_seq'))     this.set('id_seq', { users: 0, products: 0, orders: 0, payments: 0, deliveries: 0 });
+    const defaults = this.defaults();
+    this.data = defaults;
+    this.keys.forEach(key => {
+      if (this.data[key] === undefined || this.data[key] === null) this.data[key] = defaults[key];
+    });
+    this.mergeDefaults('users', defaults.users);
+    this.mergeDefaults('products', defaults.products);
 
     // Seed default admin account
     const users = this.get('users');
@@ -23,6 +46,67 @@ const DB = {
       users.push({ id: 'USR-000', name: 'Admin', email: 'admin@saod.com', password: 'admin123', role: 'admin', joined: now() });
       this.set('users', users);
     }
+    this.syncSequences();
+    this.removeLegacyLocalStorage();
+  },
+  removeLegacyLocalStorage() {
+    Object.keys(localStorage)
+      .filter(key => key.startsWith('saod_') || key === 'currentUser')
+      .forEach(key => localStorage.removeItem(key));
+  },
+  mergeDefaults(key, records) {
+    if (!Array.isArray(records) || !records.length) return;
+    const current = this.data[key] || [];
+    let changed = false;
+
+    records.forEach(record => {
+      if (!current.some(item => item.id === record.id)) {
+        current.push(this.clone(record));
+        changed = true;
+      }
+    });
+
+    if (changed) this.data[key] = current;
+  },
+  syncSequences() {
+    const seq = this.get('id_seq') || {};
+    const collections = {
+      users: this.get('users') || [],
+      products: this.get('products') || [],
+      orders: this.get('orders') || [],
+      payments: this.get('payments') || [],
+      deliveries: this.get('deliveries') || []
+    };
+
+    Object.entries(collections).forEach(([type, items]) => {
+      const maxId = items.reduce((max, item) => {
+        const idNumber = parseInt(String(item.id || '').split('-')[1], 10);
+        return Number.isNaN(idNumber) ? max : Math.max(max, idNumber);
+      }, 0);
+      seq[type] = Math.max(seq[type] || 0, maxId);
+    });
+    this.set('id_seq', seq);
+  },
+  schedulePersist() {
+    clearTimeout(this.persistTimer);
+    this.persistTimer = setTimeout(() => this.persist(), 150);
+  },
+  persist() {
+    if (!location.protocol.startsWith('http')) {
+      this.showPersistWarning();
+      return;
+    }
+
+    fetch('/api/database', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(this.data)
+    }).catch(() => this.showPersistWarning());
+  },
+  showPersistWarning() {
+    if (this.persistWarningShown) return;
+    this.persistWarningShown = true;
+    console.warn('Database changes are in memory only. Run the app with node server.js to save changes into js/database.js.');
   },
   nextId(type) {
     const seq = this.get('id_seq');
@@ -59,6 +143,26 @@ function deliveryOptionsHtml(companies) {
 
 function isPickupOption(option) {
   return option === 'PICKUP';
+}
+
+function setPaymentOptions(selectId, isPickup) {
+  const paymentEl = document.getElementById(selectId);
+  if (!paymentEl) return;
+
+  const currentValue = paymentEl.value;
+  const options = isPickup
+    ? [
+        { value: 'GCash', label: 'GCash' },
+        { value: 'Cash', label: 'Cash' }
+      ]
+    : [
+        { value: 'COD', label: 'Cash on Delivery' },
+        { value: 'GCash', label: 'GCash' }
+      ];
+
+  paymentEl.innerHTML = options.map(option => `<option value="${option.value}">${option.label}</option>`).join('');
+  paymentEl.value = options.some(option => option.value === currentValue) ? currentValue : options[0].value;
+  handlePaymentChange(selectId);
 }
 
 function setPickupFormState(addressId, riderId, option) {
@@ -173,7 +277,7 @@ function login() {
   if (!user) return showMsg('login-msg', 'Invalid email or password.');
 
   currentUser = user;
-  localStorage.setItem('currentUser', JSON.stringify(user));
+  sessionStorage.setItem('currentUser', JSON.stringify(user));
   showApp(user);
 }
 
@@ -197,7 +301,7 @@ function showApp(user) {
 
 function logout() {
   currentUser = null;
-  localStorage.removeItem('currentUser');
+  sessionStorage.removeItem('currentUser');
   document.getElementById('auth-screen').style.display = 'flex';
   document.getElementById('app').style.display = 'none';
   document.getElementById('login-email').value = '';
@@ -799,7 +903,7 @@ function openDirectOrder(productId) {
   document.getElementById('direct-order-address').value = '';
   document.getElementById('direct-order-address').disabled = false;
   document.getElementById('direct-order-address').placeholder = 'Enter delivery address';
-  document.getElementById('direct-order-payment').value = 'COD';
+  setPaymentOptions('direct-order-payment', false);
   document.getElementById('direct-order-company').value = '';
   document.getElementById('direct-order-rider').value = '';
   document.getElementById('direct-order-rider').innerHTML = `<option value="">Any Rider from Company</option>`;
@@ -827,6 +931,7 @@ function updateDirectOrderRiders() {
   const company = document.getElementById('direct-order-company').value;
   const riderSelect = document.getElementById('direct-order-rider');
   setPickupFormState('direct-order-address', 'direct-order-rider', company);
+  setPaymentOptions('direct-order-payment', isPickupOption(company));
   if (isPickupOption(company)) {
     return;
   }
@@ -954,7 +1059,7 @@ function checkoutCart() {
   document.getElementById('cart-checkout-address').value = '';
   document.getElementById('cart-checkout-address').disabled = false;
   document.getElementById('cart-checkout-address').placeholder = 'Enter delivery address';
-  document.getElementById('cart-checkout-payment').value = 'COD';
+  setPaymentOptions('cart-checkout-payment', false);
 
   const riders = DB.get('users').filter(u => u.role === 'rider');
   const companies = [...new Set(riders.map(r => r.company).filter(Boolean))];
@@ -979,6 +1084,7 @@ function updateCartCheckoutRiders() {
   const company = document.getElementById('cart-checkout-company').value;
   const riderSelect = document.getElementById('cart-checkout-rider');
   setPickupFormState('cart-checkout-address', 'cart-checkout-rider', company);
+  setPaymentOptions('cart-checkout-payment', isPickupOption(company));
   if (isPickupOption(company)) {
     return;
   }
@@ -1498,12 +1604,12 @@ function delivBadge(s) {
 DB.init();
 
 // Restore session on page load
-const savedUser = localStorage.getItem('currentUser');
+const savedUser = sessionStorage.getItem('currentUser');
 if (savedUser) {
   try {
     currentUser = JSON.parse(savedUser);
     showApp(currentUser);
   } catch (e) {
-    localStorage.removeItem('currentUser');
+    sessionStorage.removeItem('currentUser');
   }
 }
